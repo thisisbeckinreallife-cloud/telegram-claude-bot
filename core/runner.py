@@ -29,6 +29,7 @@ from core.session import (
 )
 from core.system_prompt import build_system_prompt
 from handlers.permissions import make_can_use_tool
+from tools import load_all_tools
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ async def ensure_client(session: ChatSession, app: Application) -> None:
             fallback_model=fallback,
             system_prompt=build_system_prompt(),
             stderr=lambda line: logger.error("CLAUDE_CLI: %s", line),
+            tools=load_all_tools(),
         )
         if session.safe_mode:
             options_kwargs["can_use_tool"] = make_can_use_tool(session)
