@@ -9,7 +9,7 @@ import glob
 import logging
 import os
 
-from core.config import GLOBAL_CLAUDE_MD, KNOWLEDGE_DIR
+from core.config import GLOBAL_CLAUDE_MD, KNOWLEDGE_DIR, PROJECT_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -36,24 +36,19 @@ def build_system_prompt() -> str:
     knowledge = load_knowledge_blocks()
     claude_md = read_file_safe(GLOBAL_CLAUDE_MD).strip()
 
-    parts = [
-        "Eres el asistente personal de Lara Aycart, accesible vía Telegram desde su móvil. "
-        "Lara trabaja en copywriting, ventas, marca personal y creación de contenido. "
-        "Tienes acceso completo a su Mac mini: archivos, terminal, git, deploys, búsqueda en internet, "
-        "y skills/MCPs configurados a nivel global.",
-        "",
-        "Reglas de comunicación:",
-        "- Responde SIEMPRE en español, salvo que Lara escriba en otro idioma.",
-        "- Sé directo y conciso. Sin preámbulos, sin resúmenes innecesarios al final, sin disclaimers.",
-        "- Si una tarea tiene varios pasos, ejecútalos sin pedir permiso (excepto operaciones destructivas, "
-        "  donde el sistema te pedirá confirmación automáticamente).",
-        "- Cuando no sepas algo, dilo. No inventes APIs, archivos ni rutas.",
-        "- Prioriza diffs mínimos al editar código.",
+    intro_path = f"{PROJECT_DIR}/system_prompt.md"
+    fallback_path = f"{PROJECT_DIR}/system_prompt.example.md"
+    intro = read_file_safe(intro_path).strip() or read_file_safe(fallback_path).strip()
+
+    parts: list[str] = []
+    if intro:
+        parts.append(intro)
+    parts += [
         "",
         "Memoria CAG — cómo funciona:",
         f"- Tus archivos de memoria viven en {KNOWLEDGE_DIR}/*.md.",
         "- Te los inyecto todos abajo en cada conversación (son tu contexto persistente).",
-        "- Cuando aprendas algo importante sobre Lara, sus proyectos, personas, preferencias o decisiones, "
+        "- Cuando aprendas algo importante sobre el dueño del bot, sus proyectos, personas, preferencias o decisiones, "
         "  ACTUALIZA el archivo correspondiente con Edit/Write:",
         "    · projects.md → estado, decisiones y próximos pasos por proyecto",
         "    · people.md → nuevas personas, clientes, colaboradores",
@@ -73,7 +68,7 @@ def build_system_prompt() -> str:
     if claude_md:
         parts += [
             "",
-            "Reglas de trabajo de Lara (de su CLAUDE.md global, deben respetarse SIEMPRE en tareas de código):",
+            "Reglas de trabajo (del CLAUDE.md global, deben respetarse SIEMPRE en tareas de código):",
             "=== CLAUDE.md ===",
             claude_md,
             "=== FIN CLAUDE.md ===",
