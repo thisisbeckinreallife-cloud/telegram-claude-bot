@@ -20,6 +20,7 @@ from telegram.ext import (
 # Importar core.config primero: carga .env, extiende PATH, crea directorios.
 import core.config  # noqa: F401
 
+from api.status import start_web_server
 from core.credentials import export_to_env, get_secret
 from core.worker import task_worker_loop
 from handlers.commands import (
@@ -53,7 +54,8 @@ async def on_startup(app: Application) -> None:
     worker_count = int(os.environ.get("WORKER_COUNT", "2"))
     for i in range(worker_count):
         app.create_task(task_worker_loop(i), name=f"worker-{i}")
-    logger.info("Lanzados %d workers", worker_count)
+    app.create_task(start_web_server(), name="mission-control")
+    logger.info("Lanzados %d workers + mission-control", worker_count)
 
 
 def main() -> None:
