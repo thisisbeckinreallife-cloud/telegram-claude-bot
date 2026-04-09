@@ -18,9 +18,13 @@ WEB_SURFER = AgentDefinition(
         "No inventes información: si una página no carga o no tiene lo que buscas, dilo."
     ),
     tools=[
-        "browser_navigate", "browser_click", "browser_extract",
+        "mcp__telegram-bot-tools__browser_navigate",
+        "mcp__telegram-bot-tools__browser_click",
+        "mcp__telegram-bot-tools__browser_extract",
         "WebFetch", "WebSearch", "Read",
     ],
+    # Referencia por nombre al SDK MCP server configurado en core/runner.py
+    mcpServers=["telegram-bot-tools"],
     model="sonnet",
 )
 

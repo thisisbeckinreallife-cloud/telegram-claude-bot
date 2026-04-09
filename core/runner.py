@@ -14,6 +14,7 @@ from claude_agent_sdk import (
     ClaudeSDKClient,
     ResultMessage,
     TextBlock,
+    create_sdk_mcp_server,
 )
 from telegram import Update
 from telegram.ext import Application, ContextTypes
@@ -44,6 +45,11 @@ async def ensure_client(session: ChatSession, app: Application) -> None:
         # Fallback: distinto al principal para evitar "Fallback model cannot be the same"
         fallback = MODEL_SONNET if session.current_model == MODEL_HAIKU else MODEL_HAIKU
 
+        # MCP server in-process que expone las @tool-decoradas a Claude.
+        # Reconstruido por sesión para permitir hot-reload de tools/custom/*.py.
+        # Las tools aparecen como mcp__telegram-bot-tools__<name> en la CLI.
+        tools_server = create_sdk_mcp_server("telegram-bot-tools", tools=load_all_tools())
+
         options_kwargs = dict(
             cwd=session.cwd,
             permission_mode="default" if session.safe_mode else "bypassPermissions",
@@ -52,7 +58,7 @@ async def ensure_client(session: ChatSession, app: Application) -> None:
             fallback_model=fallback,
             system_prompt=build_system_prompt(),
             stderr=lambda line: logger.error("CLAUDE_CLI: %s", line),
-            tools=load_all_tools(),
+            mcp_servers={"telegram-bot-tools": tools_server},
             agents=AGENTS,
         )
         if session.safe_mode:
