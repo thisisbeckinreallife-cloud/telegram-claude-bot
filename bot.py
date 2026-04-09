@@ -116,6 +116,8 @@ from handlers.commands import (
 
 from handlers.text import handle_text, handle_pending_decision
 
+from handlers.voice import handle_voice
+
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 
 logging.basicConfig(
@@ -125,52 +127,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------- Handlers de mensajes ---------- #
-
-
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_authorized(update):
-        return
-    session = get_session(update.effective_chat.id)
-
-    if openai_client is None:
-        await update.message.reply_text(
-            "⚠️ OPENAI_API_KEY no configurada — no puedo transcribir audio."
-        )
-        return
-
-    voice = update.message.voice or update.message.audio
-    if voice is None:
-        return
-
-    await update.message.chat.send_action("typing")
-
-    file = await context.bot.get_file(voice.file_id)
-    suffix = ".ogg" if update.message.voice else ".mp3"
-    with tempfile.NamedTemporaryFile(suffix=suffix, dir=DOWNLOAD_DIR, delete=False) as tmp:
-        local_path = tmp.name
-    try:
-        await file.download_to_drive(local_path)
-        text = await transcribe_audio(local_path)
-    except Exception as exc:
-        logger.exception("Error transcribiendo")
-        await update.message.reply_text(f"⚠️ Error transcribiendo: {exc}")
-        return
-    finally:
-        try:
-            os.remove(local_path)
-        except OSError:
-            pass
-
-    if not text.strip():
-        await update.message.reply_text("(audio vacío)")
-        return
-
-    await update.message.reply_text(f"🎙 «{text}»")
-
-    if await handle_pending_decision(update, session, text):
-        return
-
-    await run_claude(update, context, session, text, source="voice")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
