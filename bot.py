@@ -114,6 +114,8 @@ from handlers.commands import (
     cmd_cost,
 )
 
+from handlers.text import handle_text, handle_pending_decision
+
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 
 logging.basicConfig(
@@ -123,41 +125,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------- Handlers de mensajes ---------- #
-
-
-async def handle_pending_decision(update: Update, session: ChatSession, text: str) -> bool:
-    if session.pending_decisions.empty():
-        return False
-    try:
-        tool_name, decision_future = session.pending_decisions.get_nowait()
-    except asyncio.QueueEmpty:
-        return False
-
-    upper = text.strip().upper()
-    if upper in ("SIEMPRE", "ALWAYS", "A"):
-        decision_future.set_result("always")
-        await update.message.reply_text(f"✅ Permitido SIEMPRE para {tool_name} en esta sesión")
-    elif upper in ("SI", "SÍ", "YES", "Y", "OK"):
-        decision_future.set_result("allow")
-        await update.message.reply_text("✅ Permitido (solo esta vez)")
-    elif upper in ("NO", "N"):
-        decision_future.set_result("deny")
-        await update.message.reply_text("❌ Denegado")
-    else:
-        await update.message.reply_text(
-            "Hay una confirmación pendiente. Responde SI / SIEMPRE / NO."
-        )
-    return True
-
-
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_authorized(update):
-        return
-    text = (update.message.text or "").strip()
-    session = get_session(update.effective_chat.id)
-    if await handle_pending_decision(update, session, text):
-        return
-    await run_claude(update, context, session, text, source="text")
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
