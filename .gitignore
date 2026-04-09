@@ -1,0 +1,6 @@
+.env
+venv/
+downloads/
+*.log
+sessions.json
+__pycache__/
