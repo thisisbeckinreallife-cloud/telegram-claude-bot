@@ -87,6 +87,8 @@ from core.system_prompt import (
     build_system_prompt,
 )
 
+from core.audio import openai_client, transcribe_audio, synthesize_voice
+
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 
 logging.basicConfig(
@@ -94,10 +96,6 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
-
-openai_client: Optional[AsyncOpenAI] = (
-    AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-)
 
 SAFE_TOOLS = {
     "Read",
@@ -235,33 +233,6 @@ def is_authorized(update: Update) -> bool:
         logger.warning("Mensaje rechazado de user_id=%s", user.id if user else None)
         return False
     return True
-
-
-# ---------- Audio: STT y TTS ---------- #
-
-
-async def transcribe_audio(file_path: str) -> str:
-    if openai_client is None:
-        raise RuntimeError("OPENAI_API_KEY no configurada")
-    with open(file_path, "rb") as f:
-        result = await openai_client.audio.transcriptions.create(
-            model=STT_MODEL,
-            file=f,
-        )
-    return result.text
-
-
-async def synthesize_voice(text: str, out_path: str) -> None:
-    if openai_client is None:
-        raise RuntimeError("OPENAI_API_KEY no configurada")
-    text = text[:4000]
-    response = await openai_client.audio.speech.create(
-        model=TTS_MODEL,
-        voice=TTS_VOICE,
-        input=text,
-        response_format="opus",
-    )
-    response.write_to_file(out_path)
 
 
 # ---------- Utilitarios de UI y archivos ---------- #
