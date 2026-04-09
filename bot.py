@@ -20,6 +20,7 @@ from telegram.ext import (
 # Importar core.config primero: carga .env, extiende PATH, crea directorios.
 import core.config  # noqa: F401
 
+from core.credentials import export_to_env, get_secret
 from core.worker import task_worker_loop
 from handlers.commands import (
     cmd_cd,
@@ -42,7 +43,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+# Exporta los secretos del Keychain al os.environ para que el subproceso
+# `claude` (Claude Code CLI) herede ANTHROPIC_API_KEY.
+export_to_env("ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+TELEGRAM_TOKEN = get_secret("TELEGRAM_TOKEN")
 
 
 async def on_startup(app: Application) -> None:

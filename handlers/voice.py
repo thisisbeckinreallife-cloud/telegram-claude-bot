@@ -6,7 +6,7 @@ import tempfile
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from core.audio import openai_client, transcribe_audio
+from core.audio import get_openai_client, transcribe_audio
 from core.config import DOWNLOAD_DIR
 from core.runner import run_claude
 from core.session import get_session
@@ -22,7 +22,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     session = get_session(update.effective_chat.id)
 
-    if openai_client is None:
+    if get_openai_client() is None:
         await update.message.reply_text(
             "⚠️ OPENAI_API_KEY no configurada — no puedo transcribir audio."
         )

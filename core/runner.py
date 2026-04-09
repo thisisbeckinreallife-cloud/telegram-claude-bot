@@ -18,7 +18,7 @@ from claude_agent_sdk import (
 from telegram import Update
 from telegram.ext import Application, ContextTypes
 
-from core.audio import openai_client, synthesize_voice
+from core.audio import get_openai_client, synthesize_voice
 from core.config import DOWNLOAD_DIR
 from core.routing import MODEL_HAIKU, MODEL_SONNET, apply_routing
 from core.session import (
@@ -121,7 +121,7 @@ async def send_reply(update: Update, session: ChatSession, reply: str, source: s
         session.voice_mode == "on"
         or (session.voice_mode == "auto" and source == "voice")
     )
-    if want_voice and openai_client is not None:
+    if want_voice and get_openai_client() is not None:
         try:
             out_path = os.path.join(DOWNLOAD_DIR, f"reply_{update.message.message_id}.ogg")
             await synthesize_voice(reply, out_path)
