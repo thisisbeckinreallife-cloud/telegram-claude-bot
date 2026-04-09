@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from core.config import DOWNLOAD_DIR
 from core.runner import cleanup_file, run_claude
 from core.session import get_session
+from core.worker import enqueue_task
 from handlers.commands import is_authorized
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"La imagen está en disco en: {local_path}\n"
         f"Léela con la herramienta Read y descríbela / contesta a la petición."
     )
-    try:
-        await run_claude(update, context, session, prompt, source="text")
-    finally:
-        cleanup_file(local_path)
+
+    paths_to_clean = [local_path]
+
+    async def run_with_cleanup(*args, **kwargs):
+        try:
+            await run_claude(*args, **kwargs)
+        finally:
+            for p in paths_to_clean:
+                cleanup_file(p)
+
+    await update.message.reply_text("⏳ Tarea recibida, procesando...")
+    await enqueue_task(
+        session.chat_id,
+        run_with_cleanup,
+        update, context, session, prompt, "text",
+    )
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -54,7 +67,19 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"El documento está en disco en: {local_path}\n"
         f"Ábrelo con la herramienta Read y haz lo que te pido."
     )
-    try:
-        await run_claude(update, context, session, prompt, source="text")
-    finally:
-        cleanup_file(local_path)
+
+    paths_to_clean = [local_path]
+
+    async def run_with_cleanup(*args, **kwargs):
+        try:
+            await run_claude(*args, **kwargs)
+        finally:
+            for p in paths_to_clean:
+                cleanup_file(p)
+
+    await update.message.reply_text("⏳ Tarea recibida, procesando...")
+    await enqueue_task(
+        session.chat_id,
+        run_with_cleanup,
+        update, context, session, prompt, "text",
+    )

@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 
 from core.runner import run_claude
 from core.session import ChatSession, get_session
+from core.worker import enqueue_task
 from handlers.commands import is_authorized
 
 logger = logging.getLogger(__name__)
@@ -44,4 +45,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     session = get_session(update.effective_chat.id)
     if await handle_pending_decision(update, session, text):
         return
-    await run_claude(update, context, session, text, source="text")
+    await update.message.reply_text("⏳ Tarea recibida, procesando...")
+    await enqueue_task(
+        session.chat_id,
+        run_claude,
+        update, context, session, text, "text",
+    )

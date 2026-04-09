@@ -10,6 +10,7 @@ from core.audio import openai_client, transcribe_audio
 from core.config import DOWNLOAD_DIR
 from core.runner import run_claude
 from core.session import get_session
+from core.worker import enqueue_task
 from handlers.commands import is_authorized
 from handlers.text import handle_pending_decision
 
@@ -59,4 +60,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if await handle_pending_decision(update, session, text):
         return
 
-    await run_claude(update, context, session, text, source="voice")
+    await update.message.reply_text("⏳ Tarea recibida, procesando...")
+    await enqueue_task(
+        session.chat_id,
+        run_claude,
+        update, context, session, text, "voice",
+    )
