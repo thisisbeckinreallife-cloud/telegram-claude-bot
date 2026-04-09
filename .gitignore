@@ -1,6 +1,30 @@
+# Datos personales del dueño del bot — NUNCA al repo común
 .env
-venv/
-downloads/
-*.log
 sessions.json
+memory/knowledge/*.md
+!memory/knowledge/.keep
+system_prompt.md
+tools/custom/*
+!tools/custom/.gitkeep
+!tools/custom/README.md
+!tools/custom/__init__.py
+*.plist
+!*.plist.template
+
+# Logs
+*.log
+*.err.log
+bot.log*
+
+# Python
 __pycache__/
+*.pyc
+.venv/
+venv/
+
+# Playwright user data
+.playwright_user_data/
+
+# Downloads temporales
+downloads/*
+!downloads/.keep
