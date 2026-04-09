@@ -10,6 +10,7 @@ import logging
 import os
 
 from telegram.ext import (
+    Application,
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
@@ -19,6 +20,7 @@ from telegram.ext import (
 # Importar core.config primero: carga .env, extiende PATH, crea directorios.
 import core.config  # noqa: F401
 
+from core.worker import task_worker_loop
 from handlers.commands import (
     cmd_cd,
     cmd_cost,
@@ -43,8 +45,21 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 
 
+async def on_startup(app: Application) -> None:
+    worker_count = int(os.environ.get("WORKER_COUNT", "2"))
+    for i in range(worker_count):
+        app.create_task(task_worker_loop(i), name=f"worker-{i}")
+    logger.info("Lanzados %d workers", worker_count)
+
+
 def main() -> None:
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).concurrent_updates(True).build()
+    app = (
+        ApplicationBuilder()
+        .token(TELEGRAM_TOKEN)
+        .concurrent_updates(True)
+        .post_init(on_startup)
+        .build()
+    )
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("pwd", cmd_pwd))
     app.add_handler(CommandHandler("cd", cmd_cd))
