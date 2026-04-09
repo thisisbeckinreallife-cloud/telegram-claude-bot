@@ -208,6 +208,7 @@ Write: `core/session.py`:
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -224,6 +225,8 @@ from core.routing import DEFAULT_MODEL  # noqa: E402
 
 
 # ---------- Persistencia en disco ---------- #
+# Move verbatim de bot.py líneas 98-129: escritura atómica con tmp + os.replace,
+# caché en memoria SESSIONS_MAP, y escritura sólo en diff para evitar I/O extra.
 
 def load_sessions_map() -> dict:
     try:
@@ -234,27 +237,29 @@ def load_sessions_map() -> dict:
 
 
 def save_sessions_map(data: dict) -> None:
-    try:
-        with open(SESSIONS_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception:
-        logger.exception("No se pudo guardar sessions.json")
+    tmp = SESSIONS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, SESSIONS_FILE)
+
+
+SESSIONS_MAP: dict[str, str] = load_sessions_map()
 
 
 def get_stored_session_id(chat_id: int) -> Optional[str]:
-    return load_sessions_map().get(str(chat_id))
+    return SESSIONS_MAP.get(str(chat_id))
 
 
 def set_stored_session_id(chat_id: int, session_id: str) -> None:
-    data = load_sessions_map()
-    data[str(chat_id)] = session_id
-    save_sessions_map(data)
+    if SESSIONS_MAP.get(str(chat_id)) != session_id:
+        SESSIONS_MAP[str(chat_id)] = session_id
+        save_sessions_map(SESSIONS_MAP)
 
 
 def clear_stored_session_id(chat_id: int) -> None:
-    data = load_sessions_map()
-    data.pop(str(chat_id), None)
-    save_sessions_map(data)
+    if str(chat_id) in SESSIONS_MAP:
+        del SESSIONS_MAP[str(chat_id)]
+        save_sessions_map(SESSIONS_MAP)
 
 
 # ---------- Dataclass + caché en memoria ---------- #
@@ -313,6 +318,7 @@ from core.session import (
     ChatSession,
     SESSIONS,
     SESSION_LOCKS,
+    SESSIONS_MAP,
     get_session,
     get_session_lock,
     load_sessions_map,
@@ -505,6 +511,7 @@ Lee memory/knowledge/*.md + ~/.claude/CLAUDE.md y los inyecta en el prompt.
 """
 import glob
 import logging
+import os
 
 from core.config import GLOBAL_CLAUDE_MD, KNOWLEDGE_DIR
 
@@ -515,17 +522,17 @@ def read_file_safe(path: str) -> str:
     try:
         with open(path) as f:
             return f.read()
-    except (FileNotFoundError, OSError):
+    except OSError:
         return ""
 
 
 def load_knowledge_blocks() -> list[tuple[str, str]]:
-    blocks = []
-    for md_path in sorted(glob.glob(f"{KNOWLEDGE_DIR}/*.md")):
-        content = read_file_safe(md_path)
-        if content.strip():
-            filename = md_path.split("/")[-1]
-            blocks.append((filename, content))
+    """Devuelve [(filename, content)] leyendo todos los .md de KNOWLEDGE_DIR."""
+    blocks: list[tuple[str, str]] = []
+    for path in sorted(glob.glob(f"{KNOWLEDGE_DIR}/*.md")):
+        content = read_file_safe(path).strip()
+        if content:
+            blocks.append((os.path.basename(path), content))
     return blocks
 
 
@@ -1009,6 +1016,7 @@ Write: `handlers/commands.py`:
 ```python
 """Comandos slash del bot: /start /pwd /cd /reset /voice /safe /think /model /cost."""
 import logging
+import os
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -1142,14 +1150,16 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from core.audio import openai_client, transcribe_audio
-from core.runner import cleanup_file, run_claude
+from core.config import DOWNLOAD_DIR
+from core.runner import run_claude
 from core.session import get_session
 from handlers.commands import is_authorized
+from handlers.text import handle_pending_decision
 
 logger = logging.getLogger(__name__)
 ```
 
-Then append the exact body of `handle_voice` from `bot.py` lines 848-892.
+Then append the exact body of `handle_voice` from `bot.py` lines 848-892. The body uses `tempfile.NamedTemporaryFile(suffix=suffix, dir=DOWNLOAD_DIR, delete=False)` and calls `handle_pending_decision` before `run_claude`. Both symbols are now imported above — do not paraphrase or drop them. Do NOT import `cleanup_file`; `handle_voice` cleans its temp file inline via `os.remove(local_path)` in a `finally` block *before* calling `run_claude`, so no deferred-cleanup wrapper is needed.
 
 - [ ] **Step 2: Delete moved code from `bot.py`**
 
@@ -1532,20 +1542,12 @@ In `handlers/media.py`, add import:
 from core.worker import enqueue_task
 ```
 
-In `handle_photo`, replace the `run_claude` call with `enqueue_task` (same pattern as above, `source="photo"` or whatever the original uses — **preserve exactly**).
+**Important:** `handle_photo` and `handle_document` both download a file, embed its path in the prompt, and clean up after `run_claude` finishes via a `try/finally` block. In the pre-refactor `bot.py` (lines 911 and 936), both handlers call `run_claude(..., source="text")` — NOT `"photo"` or `"document"`. The `source` kwarg only has three valid values in `send_reply`: `"text"`, `"voice"`, and the auto path keyed off voice. Preserve `"text"` exactly — a wrong label will silently flip voice-mode TTS behavior.
 
-In `handle_document`, same replacement (`source="document"` or original).
+Since `run_claude` is now enqueued, the handler can't `await` it and clean up inline. Wrap it in a closure that runs cleanup in a `finally` block and enqueue the wrapper instead. Apply to both `handle_photo` and `handle_document`:
 
-**Important:** Photo/document handlers download a file, pass its path in the prompt, then clean up. The cleanup (`cleanup_file`) must happen **after** `run_claude` finishes — but now `run_claude` is enqueued, so handlers can't wait for it. **This is a behavior change to handle carefully.** Options:
-
-  1. Move `cleanup_file` into `run_claude`'s `finally` block, parameterized via a new kwarg `cleanup_paths: list[str] = []`.
-  2. Wrap `run_claude` in a closure that does cleanup after.
-
-Go with **option 2** (less invasive):
-
-Instead of enqueueing `run_claude` directly, enqueue a closure:
 ```python
-    paths_to_clean = [local_path]  # whatever list the handler uses
+    paths_to_clean = [local_path]
 
     async def run_with_cleanup(*args, **kwargs):
         try:
@@ -1558,13 +1560,13 @@ Instead of enqueueing `run_claude` directly, enqueue a closure:
     await enqueue_task(
         session.chat_id,
         run_with_cleanup,
-        update, context, session, prompt, "photo",
+        update, context, session, prompt, "text",
     )
 ```
 
-Apply to `handle_photo` and `handle_document`. Remove the direct `cleanup_file` call from the handler body.
+Remove the original `try: await run_claude(...) finally: cleanup_file(local_path)` block from both handler bodies — the closure replaces it.
 
-Same for `handle_voice`: the transcription file is cleaned up after `run_claude`. Use the same closure pattern.
+**Do NOT apply this closure to `handle_voice`.** In `bot.py` lines 869-880, `handle_voice` cleans up its temp transcription file in a `finally` block *before* calling `run_claude`, not after. The voice handler is already correct as-is; only Step 2 above (swap `await run_claude(...)` for `await enqueue_task(...)`) applies. Do not remove or move the existing `os.remove(local_path)` in voice.
 
 - [ ] **Step 4: Smoke-test imports**
 
@@ -1863,9 +1865,43 @@ async def synthesize_voice(text: str, out_path: str) -> None:
     response.write_to_file(out_path)
 ```
 
-**Also update `core/runner.py`** — `send_reply` checks `openai_client is not None` at the top. Change to `get_openai_client() is not None` and import `get_openai_client` from `core.audio`.
+**Also update `core/runner.py`** — `send_reply` checks `openai_client is not None` at the top. Fix both the runtime check AND the import line:
 
-**Also update `handlers/voice.py`** — same pattern: replace `openai_client` references with `get_openai_client()` calls.
+Open `core/runner.py`. Replace the import line:
+```python
+from core.audio import openai_client, transcribe_audio, synthesize_voice
+```
+with:
+```python
+from core.audio import get_openai_client, transcribe_audio, synthesize_voice
+```
+(drop `openai_client`; keep `transcribe_audio` and `synthesize_voice`.)
+
+Then inside `send_reply`, replace every `openai_client is not None` check with `get_openai_client() is not None`, and every bare `openai_client` call-site with a fresh `get_openai_client()` call (typically only 1–2 lines — verify with `grep -n openai_client core/runner.py`).
+
+**Also update `handlers/voice.py`** — same pattern. Replace the import line:
+```python
+from core.audio import openai_client, transcribe_audio
+```
+with:
+```python
+from core.audio import get_openai_client, transcribe_audio
+```
+and swap any `openai_client` reference in the body for a fresh `get_openai_client()` call. Verify with `grep -n openai_client handlers/voice.py` — expect zero matches after the edit.
+
+**Load-bearing contract (document this in a comment at the top of `core/audio.py`):**
+
+```python
+# IMPORTANT: this module is imported BEFORE core/credentials.export_to_env runs.
+# That means the module-level `OPENAI_API_KEY` imported from core.config is
+# bound to the PRE-Keychain environment and may be empty. Never bind
+# `OPENAI_API_KEY` by name at module scope in any consumer module — always
+# call `get_openai_client()` (which re-reads os.environ at first use) or
+# `os.environ.get("OPENAI_API_KEY")` at runtime. The same applies to any
+# future secret that gets exported from Keychain in bot.py startup.
+```
+
+No other module in the codebase may bind `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `TELEGRAM_TOKEN` at module scope after Phase 2 — these are only safe to read from `os.environ` at runtime, inside functions, because the Keychain export in `bot.py` runs after module imports have already resolved.
 
 - [ ] **Step 2: Smoke-test imports**
 
@@ -2098,29 +2134,71 @@ y skills/MCPs configurados a nivel global.
 [Añade aquí lo que quieras: tu rol específico, tu tono, herramientas que prefieres, etc.]
 ```
 
-- [ ] **Step 2: Update `core/system_prompt.py` to optionally load `system_prompt.md`**
+- [ ] **Step 2: Update `core/system_prompt.py` to load the intro from a file**
 
-Open `core/system_prompt.py`. Near the top of `build_system_prompt`, add a step that prefers `system_prompt.md` over whatever the existing hardcoded string is. The existing implementation builds the prompt from CAG files + a hardcoded intro; the new version does:
+Open `core/system_prompt.py`. Add `PROJECT_DIR` to the config import and replace the entire `build_system_prompt` body so the intro paragraph comes from a file instead of being hardcoded. The CAG injection and global `CLAUDE.md` injection stay exactly as they were in Task 5 — only the intro source changes.
 
-1. Read `PROJECT_DIR/system_prompt.md` if it exists.
-2. Else read `PROJECT_DIR/system_prompt.example.md`.
-3. Use that as the intro. Then append the CAG knowledge blocks and the global `CLAUDE.md` as it does today.
-
-**Preserve the existing logic for CAG injection.** Only change the intro source.
-
-Concrete change: locate the line in `build_system_prompt` that starts the prompt string. Prepend a file-read:
+Replace the existing import line:
 ```python
-from core.config import PROJECT_DIR
-
-def build_system_prompt() -> str:
-    intro_path = f"{PROJECT_DIR}/system_prompt.md"
-    fallback_path = f"{PROJECT_DIR}/system_prompt.example.md"
-    intro = read_file_safe(intro_path) or read_file_safe(fallback_path)
-    # ... resto del código existente, pero usa `intro` como base del prompt
-    # en lugar del string hardcodeado.
+from core.config import GLOBAL_CLAUDE_MD, KNOWLEDGE_DIR
+```
+with:
+```python
+from core.config import GLOBAL_CLAUDE_MD, KNOWLEDGE_DIR, PROJECT_DIR
 ```
 
-**Important:** Read the current `build_system_prompt` body carefully before editing. The minimum-diff approach: replace the hardcoded intro string (if any) with the `intro` variable. If the function doesn't have a clear hardcoded intro, **prepend** `intro + "\n\n"` to the final returned string.
+Then replace the **entire** `build_system_prompt` function body with this exact code:
+
+```python
+def build_system_prompt() -> str:
+    knowledge = load_knowledge_blocks()
+    claude_md = read_file_safe(GLOBAL_CLAUDE_MD).strip()
+
+    intro_path = f"{PROJECT_DIR}/system_prompt.md"
+    fallback_path = f"{PROJECT_DIR}/system_prompt.example.md"
+    intro = read_file_safe(intro_path).strip() or read_file_safe(fallback_path).strip()
+
+    parts: list[str] = []
+    if intro:
+        parts.append(intro)
+    parts += [
+        "",
+        "Memoria CAG — cómo funciona:",
+        f"- Tus archivos de memoria viven en {KNOWLEDGE_DIR}/*.md.",
+        "- Te los inyecto todos abajo en cada conversación (son tu contexto persistente).",
+        "- Cuando aprendas algo importante sobre el dueño del bot, sus proyectos, personas, preferencias o decisiones, "
+        "  ACTUALIZA el archivo correspondiente con Edit/Write:",
+        "    · projects.md → estado, decisiones y próximos pasos por proyecto",
+        "    · people.md → nuevas personas, clientes, colaboradores",
+        "    · preferences.md → reglas de trabajo y comunicación",
+        "    · decisions.md → decisiones importantes con contexto y razón",
+        "    · MEMORY.md → hechos dinámicos que no encajan en los anteriores",
+        "- No guardes cosas triviales, efímeras o derivables del estado actual del repo.",
+        "- Usa formato de fecha absoluto (YYYY-MM-DD), nunca relativo.",
+    ]
+
+    if knowledge:
+        parts += ["", "========= BASE DE CONOCIMIENTO ========="]
+        for name, content in knowledge:
+            parts += [f"", f"--- {name} ---", content]
+        parts += ["", "========= FIN BASE DE CONOCIMIENTO ========="]
+
+    if claude_md:
+        parts += [
+            "",
+            "Reglas de trabajo (del CLAUDE.md global, deben respetarse SIEMPRE en tareas de código):",
+            "=== CLAUDE.md ===",
+            claude_md,
+            "=== FIN CLAUDE.md ===",
+        ]
+
+    return "\n".join(parts)
+```
+
+**Notes on the diff against Task 5:**
+- The hardcoded "Eres el asistente personal de Lara Aycart…" plus "Reglas de comunicación…" block is gone. Those lines now live in `system_prompt.md` / `system_prompt.example.md` (see Step 1).
+- The CAG-memory instructions, the CAG-block injection, and the CLAUDE.md injection are preserved verbatim, only the opening string `Reglas de trabajo de Lara` becomes the generic `Reglas de trabajo` so Task 31's fork scenario reads cleanly.
+- Phase 3 does not touch `DOWNLOAD_DIR`, `SESSIONS_FILE`, or any other symbol — only this function body and the `core.config` import line.
 
 - [ ] **Step 3: Smoke-test**
 
